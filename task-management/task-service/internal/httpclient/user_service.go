@@ -13,7 +13,7 @@ type User struct {
 	Username string `json:"username"`
 }
 
-const userServiceURL = "http://user-service:8081/users/1"
+const userServiceURL = "http://user-service:8081/users/"
 
 // UserServiceClient manages HTTP communication with the user-service
 type UserServiceClient struct {

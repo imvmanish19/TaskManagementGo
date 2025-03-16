@@ -24,15 +24,12 @@ func CreateTask(c *gin.Context) {
 	// Fetch user information from User Service
 	user, err := userServiceClient.GetUser(task.UserID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not fetch user information"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "User not found"})
 		return
 	}
 
-	// If user not found, return error
-	if user == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
-		return
-	}
+	fmt.Printf("Task: %v", task)
+	fmt.Printf("User: %v", user)
 
 	// Assign an ID and append to tasks
 	task.ID = strconv.Itoa(len(tasks) + 1)
@@ -47,93 +44,125 @@ func CreateTask(c *gin.Context) {
 
 // GetTasks retrieves a list of tasks with pagination and optional filtering by status
 func GetTasks(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	status := c.DefaultQuery("status", "")
+    userID, _ := strconv.Atoi(c.DefaultQuery("user_id", "0"))
 
-	// Pagination settings
-	itemsPerPage := 2
-	start := (page - 1) * itemsPerPage
-	end := start + itemsPerPage
+    if userID < 0 {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "User id is not valid"})
+        return
+    }
+    
+    page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+    status := c.DefaultQuery("status", "")
 
-	// Ensure end index does not exceed slice bounds
-	if end > len(tasks) {
-		end = len(tasks)
-	}
+    // Pagination settings
+    itemsPerPage := 2
+    start := (page - 1) * itemsPerPage
+    end := start + itemsPerPage
 
-	// Filter tasks based on the status query parameter
-	var filteredTasks []models.Task
-	for _, task := range tasks[start:end] {
-		if status == "" || task.Status == status {
-			filteredTasks = append(filteredTasks, task)
-		}
-	}
+    // Ensure end index does not exceed slice bounds
+    if end > len(tasks) {
+        end = len(tasks)
+    }
 
-	// Prepare the response with tasks (no user details included)
-	c.JSON(http.StatusOK, filteredTasks)
+    // Filter tasks based on the status and user_id query parameters
+    var filteredTasks []models.Task
+    for _, task := range tasks[start:end] {
+        if (status == "" || task.Status == status) && (userID == 0 || task.UserID == strconv.Itoa(userID)) {
+            filteredTasks = append(filteredTasks, task)
+        }
+    }
+
+    // Prepare the response with filtered tasks
+    c.JSON(http.StatusOK, filteredTasks)
 }
 
 // DeleteTask handles the deletion of a task by ID
 func DeleteTask(c *gin.Context) {
-	taskID := c.Param("id")
+    taskID := c.Param("id")
+    userID := c.DefaultQuery("user_id", "")  // Assuming user_id is passed as a query parameter or via JWT in headers
 
-	// Find the index of the task to delete
-	var taskIndex int
-	var found bool
-	for i, task := range tasks {
-		if task.ID == taskID {
-			taskIndex = i
-			found = true
-			break
-		}
-	}
+    // Ensure that userID is not empty and matches the task's UserID
+    if userID == "" {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "User ID is required"})
+        return
+    }
 
-	// If task is not found, return an error
-	if !found {
-		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("Task with ID %s not found", taskID)})
-		return
-	}
+    // Find the index of the task to delete
+    var taskIndex int
+    var found bool
+    for i, task := range tasks {
+        if task.ID == taskID {
+            if task.UserID != userID {
+                // If the user ID doesn't match the task's UserID, deny the action
+                c.JSON(http.StatusForbidden, gin.H{"error": "You are not authorized to delete this task"})
+                return
+            }
+            taskIndex = i
+            found = true
+            break
+        }
+    }
 
-	// Delete the task by removing it from the slice
-	tasks = append(tasks[:taskIndex], tasks[taskIndex+1:]...)
+    // If task is not found, return an error
+    if !found {
+        c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("Task with ID %s not found", taskID)})
+        return
+    }
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": fmt.Sprintf("Task with ID %s has been deleted", taskID),
-	})
+    // Delete the task by removing it from the slice
+    tasks = append(tasks[:taskIndex], tasks[taskIndex+1:]...)
+
+    c.JSON(http.StatusOK, gin.H{
+        "message": fmt.Sprintf("Task with ID %s has been deleted", taskID),
+    })
 }
 
 // UpdateTask handles updating a task by ID
 func UpdateTask(c *gin.Context) {
-	taskID := c.Param("id")
-	var updatedTask models.Task
+    taskID := c.Param("id")
+    userID := c.DefaultQuery("user_id", "")  // Assuming user_id is passed as a query parameter or via JWT in headers
+    var updatedTask models.Task
 
-	// Bind the JSON body to the task struct
-	if err := c.ShouldBindJSON(&updatedTask); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
+    // Ensure that userID is not empty and matches the task's UserID
+    if userID == "" {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "User ID is required"})
+        return
+    }
 
-	// Find the task in the list
-	var taskIndex int
-	var found bool
-	for i, task := range tasks {
-		if task.ID == taskID {
-			taskIndex = i
-			found = true
-			break
-		}
-	}
+    // Bind the JSON body to the task struct
+    if err := c.ShouldBindJSON(&updatedTask); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        return
+    }
 
-	// If task is not found, return an error
-	if !found {
-		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("Task with ID %s not found", taskID)})
-		return
-	}
+    // Find the task in the list
+    var taskIndex int
+    var found bool
+    for i, task := range tasks {
+        if task.ID == taskID {
+            if task.UserID != userID {
+                // If the user ID doesn't match the task's UserID, deny the action
+                c.JSON(http.StatusForbidden, gin.H{"error": "You are not authorized to update this task"})
+                return
+            }
+            taskIndex = i
+            found = true
+            break
+        }
+    }
 
-	// Update the task
-	tasks[taskIndex] = updatedTask
+    // If task is not found, return an error
+    if !found {
+        c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("Task with ID %s not found", taskID)})
+        return
+    }
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": fmt.Sprintf("Task with ID %s has been updated", taskID),
-		"task":    updatedTask,
-	})
+    // Update the task
+	updatedTask.ID = taskID
+    tasks[taskIndex] = updatedTask
+
+    c.JSON(http.StatusOK, gin.H{
+        "message": fmt.Sprintf("Task with ID %s has been updated", taskID),
+        "task":    updatedTask,
+    })
 }
